@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -155,13 +154,17 @@ func main() {
 
 	server := http.Server{Addr: fmt.Sprintf(":%d", port)}
 
+	var accessToken string
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("Getting access token")
 
-		accessToken, err := getAccessToken(code)
-		if err != nil {
-			fmt.Println(err)
-			return
+		if accessToken == "" {
+			accessToken, err = getAccessToken(code)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
 		}
 
 		count, err := getUnreadArticlesCount(accessToken)
@@ -170,9 +173,16 @@ func main() {
 			return
 		}
 
-		fmt.Printf("Total number of unread articles: %d\n", count)
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `
+		<html>
+			<body style="display: flex; justify-content: center; align-items: center;">
+				<h1 style="font-size: xxx-large;">%d</h1>
+			</body>
+		</html>`, count)
 
-		server.Shutdown(context.Background())
+		fmt.Printf("Total number of unread articles: %d\n", count)
 	})
 
 	server.ListenAndServe()
