@@ -1,10 +1,10 @@
 # Pocket Counter
 
-A simple cli tool to count the articles in your getpocket.com list.
+A simple CLI tool to count the articles in your getpocket.com list.
 
 ## Usage
 
-First you need to go [here](https://getpocket.com/developer/apps/new) to create a new app and getting its `consumer_key`.
+First, you need to go [here](https://getpocket.com/developer/apps/new) to create a new app and getting its `consumer_key`.
 
 Fill out the form just like below.
 
@@ -24,10 +24,10 @@ Run it using the `consumer_key` and follow the instructions.
 pocket-counter -consumer-key 1234-abcd1234abcd1234abcd1234
 ```
 
-And VOILA!!!
+And Voilà!!!
 
 ## Contribution
 
-If anything goes wrong and the code doesn't work correctly please create an issue.
+If anything goes wrong, and the code doesn't work correctly, please create an issue.
 
 Any PRs are welcome!
