@@ -6,12 +6,21 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"os"
+	"os/user"
+	"path"
 )
 
 var (
 	port        int
 	consumerKey string
+	configPath  string
 )
+
+type config struct {
+	ConsumerKey string `json:"consumer_key"`
+	AccessToken string `json:"access_token"`
+}
 
 type oauthRequestResponse struct {
 	Code string `json:"code"`
@@ -27,11 +36,18 @@ type getArticlesResponse struct {
 }
 
 func init() {
+	u, err := user.Current()
+	if err != nil {
+		panic(err)
+	}
+	defaultConfigPath := path.Join(u.HomeDir, ".config", "pocket", "config.json")
+
 	flag.IntVar(&port, "port", 5000, "local port to listen on")
 	flag.StringVar(&consumerKey, "consumer-key", "", "the consumer_key you get from getpocket.com for your app")
+	flag.StringVar(&configPath, "config", defaultConfigPath, "path to config file")
 }
 
-func getCode(redirectURI string) (string, error) {
+func getCode(consumerKey, redirectURI string) (string, error) {
 	buf := bytes.NewBuffer([]byte{})
 	json.NewEncoder(buf).Encode(
 		map[string]string{"consumer_key": consumerKey, "redirect_uri": redirectURI},
@@ -63,7 +79,7 @@ func getCode(redirectURI string) (string, error) {
 	return result.Code, nil
 }
 
-func getAccessToken(code string) (string, error) {
+func getAccessToken(consumerKey, code string) (string, error) {
 	buf := bytes.NewBuffer([]byte{})
 	json.NewEncoder(buf).Encode(
 		map[string]string{"consumer_key": consumerKey, "code": code},
@@ -95,10 +111,10 @@ func getAccessToken(code string) (string, error) {
 	return result.AccessToken, nil
 }
 
-func getUnreadArticlesCount(accessToken string) (int, error) {
+func getUnreadArticlesCount(cfg *config) (int, error) {
 	buf := bytes.NewBuffer([]byte{})
 	json.NewEncoder(buf).Encode(
-		map[string]string{"consumer_key": consumerKey, "access_token": accessToken},
+		map[string]string{"consumer_key": cfg.ConsumerKey, "access_token": cfg.AccessToken},
 	)
 
 	req, err := http.NewRequest("POST", "https://getpocket.com/v3/get", buf)
@@ -125,65 +141,118 @@ func getUnreadArticlesCount(accessToken string) (int, error) {
 	}
 
 	return len(result.List), nil
-
 }
 
-func main() {
+func loadConfig() (*config, error) {
 	flag.Parse()
 
-	if consumerKey == "" {
-		fmt.Println("You must provide consumer-key. Visit https://getpocket.com/developer/apps/ to get one")
-		return
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		if err := os.MkdirAll(path.Dir(configPath), 0755); err != nil {
+			return nil, fmt.Errorf("Create config dir failed: %w", err)
+		}
+	}
+
+	cfg := &config{}
+	f, err := os.Open(configPath)
+	if err == nil {
+		if err := json.NewDecoder(f).Decode(cfg); err != nil {
+			return nil, fmt.Errorf("Config decode failed: %w", err)
+		}
+	}
+
+	if consumerKey != "" {
+		cfg.ConsumerKey = consumerKey
+	}
+
+	if cfg.ConsumerKey == "" {
+		return nil, fmt.Errorf("You must provide consumer-key. Visit https://getpocket.com/developer/apps/ to get one")
 	}
 
 	if port < 1024 {
-		fmt.Println("port number must be larger than 1024")
-		return
+		return nil, fmt.Errorf("port number must be larger than 1024")
 	}
 
-	redirectURI := fmt.Sprintf("http://localhost:%d/", port)
+	return cfg, nil
+}
 
-	fmt.Println("Getting code")
-	code, err := getCode(redirectURI)
+func updateConfig(cfg *config) error {
+	f, err := os.OpenFile(configPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("Open config file failed: %w", err)
+	}
+
+	if err := json.NewEncoder(f).Encode(cfg); err != nil {
+		return fmt.Errorf("Config encode failed: %w", err)
+	}
+
+	return nil
+}
+
+func showResult(cfg *config, ch chan struct{}) {
+	<-ch
+
+	count, err := getUnreadArticlesCount(cfg)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	fmt.Printf("Open https://getpocket.com/auth/authorize?request_token=%s&redirect_uri=%s\n", code, redirectURI)
+	fmt.Printf("Total number of unread articles: %d\n", count)
+}
 
-	server := http.Server{Addr: fmt.Sprintf(":%d", port)}
+func main() {
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
-	var accessToken string
+	ch := make(chan struct{})
+	if cfg.AccessToken == "" {
+		go func() {
+			redirectURI := fmt.Sprintf("http://localhost:%d/", port)
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println("Getting access token")
-
-		if accessToken == "" {
-			accessToken, err = getAccessToken(code)
+			fmt.Println("Getting code")
+			code, err := getCode(cfg.ConsumerKey, redirectURI)
 			if err != nil {
 				fmt.Println(err)
 				return
 			}
-		}
 
-		count, err := getUnreadArticlesCount(accessToken)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+			fmt.Printf("Open https://getpocket.com/auth/authorize?request_token=%s&redirect_uri=%s\n", code, redirectURI)
 
-		w.WriteHeader(http.StatusOK)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `
-		<html>
-			<body style="display: flex; justify-content: center; align-items: center;">
-				<h1 style="font-size: xxx-large;">%d</h1>
-			</body>
-		</html>`, count)
+			server := http.Server{Addr: fmt.Sprintf(":%d", port)}
 
-		fmt.Printf("Total number of unread articles: %d\n", count)
-	})
+			http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				fmt.Println("Getting access token")
 
-	server.ListenAndServe()
+				cfg.AccessToken, err = getAccessToken(cfg.ConsumerKey, code)
+				if err != nil {
+					fmt.Println(err)
+					return
+				}
+
+				ch <- struct{}{}
+
+				w.WriteHeader(http.StatusOK)
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				fmt.Fprintf(w, "<html><body>You may close the window</body></html>")
+			})
+
+			if err := server.ListenAndServe(); err != nil {
+				fmt.Println(err)
+			}
+		}()
+	} else {
+		go func() {
+			ch <- struct{}{}
+		}()
+	}
+
+	showResult(cfg, ch)
+
+	err = updateConfig(cfg)
+	if err != nil {
+		fmt.Println(err)
+	}
 }
