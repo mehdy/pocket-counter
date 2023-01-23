@@ -15,13 +15,13 @@ After creating the app, copy the `consumer_key`.
 Then you need to install this project.
 
 ```bash
-go install github.com/mehdy/Pocket-Counter@latest
+go install github.com/mehdy/pocket-counter@latest
 ```
 
 Run it using the `consumer_key` and follow the instructions.
 
 ```bash
-Pocket-Counter -consumer-key 1234-abcd1234abcd1234abcd1234
+pocket-counter -consumer-key 1234-abcd1234abcd1234abcd1234
 ```
 
 And VOILA!!!
